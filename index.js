@@ -1,11 +1,167 @@
 const Alexa = require('ask-sdk-core');
+var mysql = require('mysql');
 
 // Text strings
-
-const welcomeOutput = "Welcome to Dell Handler. Would you like a list of available products, or do you need help with a specific product?";
+const SKILL_NAME = 'Dell Handler';
+const welcomeOutput = "Welcome to Dell Handler. Please state which product line you would like to know about: data storage, converged infrastructure, server, or data protection.";
 const welcomeReprompt = "Let me know which product you would like to know about";
 const helpOutput = 'Try asking about a specific product or product line.';
 const helpReprompt = 'Try asking about a specific product or product line.';
+
+const FALLBACK_MESSAGE = `The ${SKILL_NAME} was unable to process your request. Try asking about a specific product or product line. Is there something I can help you with?`;
+const FALLBACK_REPROMPT = 'What can I help you with?';
+
+const connection = mysql.createConnection({
+    host: "askemc-test-database.ckn2kh0loqvp.us-east-1.rds.amazonaws.com",
+    user: "admin",
+    password: "delltech",
+    port: "3306",
+    database: "innodb",
+    debug    :  false
+});
+
+let date_ob = new Date();
+let date = ("0" + date_ob.getDate()).slice(-2);
+let month = ("0" + (date_ob.getMonth() + 1)).slice(-2);
+let year = date_ob.getFullYear();
+let hours = date_ob.getHours();
+let minutes = date_ob.getMinutes();
+let seconds = date_ob.getSeconds();
+var timestamp = (year + "-" + month + "-" + date + " " + hours + ":" + minutes + ":" + seconds);
+
+const STREAMS = [
+  {
+    "token": "1",
+    "url": 'https://streaming.radionomy.com/-ibizaglobalradio-?lang=en-US&appName=iTunes.m3u',
+    "metadata" : {
+      "title": "Stream One",
+      "subtitle": "A subtitle for stream one",
+      "art": {
+        "sources": [
+          {
+            "contentDescription": "example image",
+            "url": "https://s3.amazonaws.com/cdn.dabblelab.com/img/audiostream-starter-512x512.png",
+            "widthPixels": 512,
+            "heightPixels": 512
+          }
+        ]
+      },
+      "backgroundImage": {
+        "sources": [
+          {
+            "contentDescription": "example image",
+            "url": "https://s3.amazonaws.com/cdn.dabblelab.com/img/wayfarer-on-beach-1200x800.png",
+            "widthPixels": 1200,
+            "heightPixels": 800
+          }
+        ]
+      }
+    }
+  }
+];
+
+const FallbackHandler = {
+  canHandle(handlerInput) {
+    const request = handlerInput.requestEnvelope.request;
+    console.log("FALLBACK");
+    return request.type === 'IntentRequest'
+      && request.intent.name === 'AMAZON.FallbackIntent';
+  },
+
+  handle(handlerInput) {
+        var values = [timestamp, 'FALLBACK', null, null];
+        connection.query("INSERT INTO innodb.Lambda (TIMESTAMP,CATEGORY,PRODUCT,MODEL) VALUES(?)", [values], function(err, result, fields) {
+            // if any error while executing above query, throw error
+            if (err) throw err;
+            // if there is no error, you have the result
+            console.log(result);
+        });
+        connection.end();
+        
+    return handlerInput.responseBuilder
+      .speak(FALLBACK_MESSAGE)
+      .reprompt(FALLBACK_REPROMPT)
+      .getResponse();
+  },
+};
+
+const PlayStreamIntentHandler = {
+  canHandle(handlerInput) {
+    //return handlerInput.requestEnvelope.request.type === 'LaunchRequest' ||
+      return handlerInput.requestEnvelope.request.type === 'IntentRequest' &&
+        (
+          handlerInput.requestEnvelope.request.intent.name === 'PlayStreamIntent' ||
+          handlerInput.requestEnvelope.request.intent.name === 'AMAZON.ResumeIntent' ||
+          handlerInput.requestEnvelope.request.intent.name === 'AMAZON.LoopOnIntent' ||
+          handlerInput.requestEnvelope.request.intent.name === 'AMAZON.NextIntent' ||
+          handlerInput.requestEnvelope.request.intent.name === 'AMAZON.PreviousIntent' ||
+          handlerInput.requestEnvelope.request.intent.name === 'AMAZON.RepeatIntent' ||
+          handlerInput.requestEnvelope.request.intent.name === 'AMAZON.ShuffleOnIntent' ||
+          handlerInput.requestEnvelope.request.intent.name === 'AMAZON.StartOverIntent'
+      );
+  },
+  handle(handlerInput) {
+
+    let stream = STREAMS[0];
+
+    handlerInput.responseBuilder
+      .speak(`starting ${stream.metadata.title}`)
+      .addAudioPlayerPlayDirective('REPLACE_ALL', stream.url, stream.token, 0, null, stream.metadata);
+
+    return handlerInput.responseBuilder
+      .getResponse();
+  },
+};
+
+const PlaybackStoppedIntentHandler = {
+  canHandle(handlerInput) {
+    return handlerInput.requestEnvelope.request.type === 'PlaybackController.PauseCommandIssued' || 
+            handlerInput.requestEnvelope.request.type === 'AudioPlayer.PlaybackStopped';
+  },
+  handle(handlerInput) {
+    handlerInput.responseBuilder
+      .addAudioPlayerClearQueueDirective('CLEAR_ALL')
+      .addAudioPlayerStopDirective();
+
+    return handlerInput.responseBuilder
+      .getResponse();
+  },
+};
+
+const CancelAndStopIntentHandler = {
+  canHandle(handlerInput) {
+    return handlerInput.requestEnvelope.request.type === 'IntentRequest'
+        && (
+          handlerInput.requestEnvelope.request.intent.name === 'AMAZON.StopIntent' ||
+          handlerInput.requestEnvelope.request.intent.name === 'AMAZON.PauseIntent' ||
+          handlerInput.requestEnvelope.request.intent.name === 'AMAZON.CancelIntent' ||
+          handlerInput.requestEnvelope.request.intent.name === 'AMAZON.LoopOffIntent' ||
+          handlerInput.requestEnvelope.request.intent.name === 'AMAZON.ShuffleOffIntent'
+        );
+  },
+  handle(handlerInput) {
+
+    handlerInput.responseBuilder
+      .addAudioPlayerClearQueueDirective('CLEAR_ALL')
+      .addAudioPlayerStopDirective();
+
+    return handlerInput.responseBuilder
+      .getResponse();
+  },
+};
+
+const PlaybackStartedIntentHandler = {
+  canHandle(handlerInput) {
+    return handlerInput.requestEnvelope.request.type === 'AudioPlayer.PlaybackStarted';
+  },
+  handle(handlerInput) {
+    handlerInput.responseBuilder
+      .addAudioPlayerClearQueueDirective('CLEAR_ENQUEUED');
+
+    return handlerInput.responseBuilder
+      .getResponse();
+  },
+};
 
 // Intent Handlers
 
@@ -45,291 +201,11 @@ const CompletedHandler = {
   },
   handle(handlerInput) {
     const responseBuilder = handlerInput.responseBuilder;
-    const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
-    const slotValues = getSlotValues(filledSlots);
-    let speechOutput = `${speechOutput} from ${slotValues.product.synonym}`;
+    //const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
+    //const slotValues = getSlotValues(filledSlots);
+    //let speechOutput = `${speechOutput}`;
+    let speechOutput = '';
     
-    return responseBuilder
-      .speak(speechOutput)
-      .getResponse();
-  },
-};
-
-const SummaryHandler = {
-  canHandle(handlerInput) {
-    const request = handlerInput.requestEnvelope.request;
-    return request.type === 'LaunchRequest' 
-      || (request.type === 'IntentRequest'
-        && request.intent.name === 'SummaryIntent');
-  },
-  handle(handlerInput) {
-    const responseBuilder = handlerInput.responseBuilder;
-    const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
-    const slotValues = getSlotValues(filledSlots);
-    var speechOutput;
-    
-    switch(slotValues.product.synonym) {
-        /*
-        case 'poweredge XR2':
-            speechOutput = 'The poweredge X R 2 is a compact 1U 2-socket server with up to 8 2.5 inch hot-swappable drives. Target use cases include virtualization and software defined storage including V san.';
-            break;
-        case 'poweredge T1 40':
-            speechOutput = 'The poweredge T1 40 is an easy to use and safe entry-level single-socket tower server designed for general-purpose business applications and remote offices. Target use cases include mail and messaging, as well as point of sale operations.';
-            break;
-        case 'poweredge T4 40':
-            speechOutput = 'The poweredge T4 40 is a powerful yet quiet workhorse build for office workloads. Target use cases include mail, collaboration, and virtualization, as well as mid-size business analytics and intelligence.';
-            break;
-        case 'poweredge T6 40':
-            speechOutput = 'The poweredge T6 40 is a versatile and scalable powerhouse server with massive internal storage capacity in either rack or tower form. Target use cases include desktop and server virtualization, ERP, and consolidation, as well as databases, business intelligence, and analytics';
-            break;
-        
-        case 'poweredge R2 40':
-            speechOutput = 'The poweredge R2 40 is a single-socket entry-level rack server designed for businesses looking for enterprise class features at an affordable price. Target use cases include web server hosting, mail, messaging, and collaboration.';
-            break;
-        case 'poweredge R3 40':
-            speechOutput = 'The poweredge R3 40 is a single-socket rack server designed for productivity and data intensive applications for remote or branch offices. Target use cases include collaboration, mail, messaging, and backup and recovery.';
-            break;
-        case 'poweredge R4 40':
-            speechOutput = 'The poweredge R4 40 is a single-socket rack server optimized for dense scale-out computing and storage. Target use cases include high performance computing, virtualization, web-tech deployments, and applications.';    
-            break;
-        case 'poweredge R5 40':
-            speechOutput = 'The poweredge R5 40 is a versatile 2U server providing balanced compute and storage to adapt to a variety of applications. Target use cases include softwarae defined storage, messaging, and video streaming.';
-            break;
-        case 'poweredge R6 40':
-            speechOutput = 'The poweredge R6 40 is an ideal combination for dense scale out data center computing and storage in a 1U platform. Target use cases include HPC, virtualization, and software defined storage.';
-            break;
-        case 'poweredge R7 40':
-            speechOutput = 'The poweredge R7 40 is a workhorse server providing storage, I/O, and application accelaration balance with configuration flexibility. Target use cases include VDI, AI, machine learning, and private cloud utilities.';
-            break;
-        case 'poweredge R7 40 XD':
-            speechOutput = speechOutput = 'The poweredge R7 40 XD is an ideal server for applications requiring best-in-class storage performance, high scalability, and density. Target use cases include software defined storage, big data, unstructured data, and analytics.';
-            break;
-        case 'poweredge R7 40 XD2':
-        case 'poweredge R7 40 xd2':
-            speechOutput = 'The poweredge R7 40 XD 2 is a high performance enterprise content server. Target use cases include media streaming, exchange / sharepoint, software-defined-storage, and Hadoop';
-            break;
-        case 'poweredge R8 40':
-            speechOutput = 'The poweredge R8 40 is a high-performance 2U server built for demanding applications. Target use cases include data intensive applications and data analytics.';
-            break;
-        case 'poweredge R9 40':
-            speechOutput = 'The poweredge R9 40 is a 3U server designed to handle extremely demanding, mission-critical workloads and large databases. Target use cases include in-memory databases, analytics, and dense virtualization, including data-redundant hypervisors and fault-resistent memory.';
-            break;
-        case 'poweredge R9 40 xa':
-        case 'poweredge R9 40 XA':
-            speechOutput = 'The poweredge R9 40 X A is an extremely powerful 4U server designed to run complex workloads using highly scalable memory. Target use cases include compute-intensive applications, machine learning, artificial intelligence, and GPU database acceleration.';
-            break;
-        
-        case 'unity':
-            speechOutput = 'The Dell EMC Unity sets new standards for midrange storage with a powerful combination of simplicity, modern design, affordable price point, and deployment flexibility. The unity is available in either all-flash or hybrid models. Target use cases include databases, transactional workloads, and general-purpose workloads.';
-            break;
-        case 'unity XT':
-            speechOutput = 'The unity XT delivers impressive gains in performance and efficiency and provides multiple paths to the cloud. The unity XT is available in either all-flash or hybrid models. Target use cases include databases, transactional workloads, and general purpose workloads.';
-            break;
-        */
-        case 'sc series':
-        case 'SC series':
-            speechOutput = 'The SC Series is a general purpose block storage system available in either all-flash or hybrid models. Target use cases include databases, mixed mainstream workloads, and data warehouse applications.';
-            break;
-        /*
-        case 'PowerMax':
-            speechOutput = 'The powermax is a modern storage array designed to be powerful, simple, and trusted with absolutely no compromises. Target use cases include traditional and next generation applications, financial sesrvices, healthcare, life sciences, and other workloads where the highest performance and availability is required.';
-            break;
-        */
-        case 'extreme IO':
-            speechOutput = 'The extreme IO is a purpose-built, all-flash array offering high performance with consistently low latency. Target use cases include virtualized environments, including VDI environments, and workloads which benefit from efficient copy data management and data reduction ratios.';
-            break;
-        /*
-        case 'isilon':
-            speechOutput = 'The isilon is the industries number one scale-out network-attached-storage solution, available with either all-flash, hybrid, or archiving nodes. Target use cases include high performance computing, enterprise workloads, data analytics, and deep archiving.';
-            break;
-        */
-        case 'ECS':
-            speechOutput = 'The ECS is an industry-leading object storage platform built to support traditional and next-generation workloads, with near-infinite scalability. Target use cases include telecommunications, media, and entertainment, as well as healthcare and life sciences.';
-            break;
-        case 'powervault':
-            speechOutput = 'The powervault is a next-gen entry-level block storage array thats purpose-built and optimized for san and DAS environments. The powervault is available in either all-flash or hybrid models, and either 2U or 5U form factors. Target use cases include HPC, video surveillance, and media, as well as healthcare and life sciences.';
-            break;
-        case 'V Plex':
-        case 'v Plex':
-            speechOutput = 'The V Plex delivers continuous data availability and data mobility to ensure uptime for business critical applications and create an agile infrastructure that is easy to manage and reconfigure. Target use cases include mission critical application availability, workload mobility, and non-disruptive storage array migration.';    
-            break;
-        case 'VX block':
-        case 'vx block':
-            speechOutput = 'The VX block is a turnkey converged infrastructure system for high value workload consolidation, built on powerful Dell EMC storage and data protection. Target use cases include mission critical, general purpose, and AI/ML workloads.';    
-            break;
-        case 'VX rail':
-        case 'vx rail':
-            speechOutput = 'The VX rail is the industries only HCI appliance developed and fully optimized for VM ware environments. Target use cases include industrial automation, healthcare and life sciences, military and defense, and telecommunications.';
-            break;
-        case 'VX rack':
-        case 'vx rack':
-            speechOutput = 'The VX rack is a rack-scale HCI delivering flexibility, scalability, and performance with multi-hypervisor support. Target use cases include databases, data warehousing, and transactional workloads, as well as healthcare and life sciences.';    
-            break;
-        case 'VX rack SDDC':
-        case 'VX rack sddc':
-        case 'vx rack SDDC':
-        case 'vx rack sddc':
-            speechOutput = 'The VX rack SDDC is a rack-scale HCI system powered by VM ware cloud foundation. VX rack SDDC is the easiest and fastest way to deploy, support, and extend a production-ready VM ware cloud.';    
-            break;
-        case 'VX rack AS':
-        case 'VX rack as':
-        case 'vx rack AS':
-        case 'vx rack as':
-            speechOutput = 'The VX rack A S is an on-premise hybrid cloud platform for delivering infrastructure and platform-as-a-service with a consistent Azure experience on-premises or in the public cloud. Target use cases include edge and disconnected solutions, aggregation of analytics and big data modelling, and cloud applications.';
-            break;
-        case 'data domain':
-            speechOutput = 'The data domain is a protection storage appliance that provides fast backups and recovery, protects data on-premises and in the cloud, and delivers a lower cost-to-protect with leading data deduplication and bandwidth utilization. Target use cases include enterprise backup and archive for databases, e-mail servers, virtual machines, file shares, enterprise applications, content management, and ROBO environments.';    
-            break;
-        case 'IDPA':
-            speechOutput = 'The IDPA is a purpose-built integrated data protection appliance that simplifies deployment and management while deliverying powerful data protection capabilities. Target use cases include backup and restore, disaster recovery, analytics, and deduplication.';    
-            break;
-        case 'power protect':
-            speechOutput = 'The power protect is a next-generation multi-dimensional data management appliance powered by data domain deduplication. Target use cases include oracle, MS SQL, windows, and linux filesystem workloads.';    
-            break;
-        case 'powerswitch S 3,048 ON':
-        case 'powerswitch S3048ON':
-        case 'powerswitch S 30 48 ON':
-            speechOutput = 'The powerswitch S 30 48 O N is a high-density 1 GBE open networking switch built for server and storage connectivity. Target use cases include enterprise and mid-market enviornments with existing 1 GBE installed base.';
-            break;
-        case 'powerswitch S 31 24':
-        case 'powerswitch S3124':
-        case 'powerswitch S 3,124':
-            speechOutput = 'The powerswitch S 31 24 series is a high-performance 24-port managed ethernet switch designed for non-blocking access. Target use cases include enterprise and mid-market enviornments with existing 1 GBE installed base.';
-            break;
-        case 'powerswitch S 31 48':
-        case 'powerswitch S3148':
-        case 'powerswitch S 3,148':
-            speechOutput = 'The powerswitch S 31 48 series is a high-performance 48-port managed ethernet switch designed for non-blocking access. Target use cases include enterprise and mid-market enviornments with existing 1 GBE installed base.';
-            break;
-        case 'powerswitch S 40 100 ON':
-        case 'powerswitch S 4,100 ON':
-            speechOutput = 'The powerswitch S 40 100 O N series is a high performance open networking top-of-rack switch with multirate Gigabit ethernet and unified ports. Target use cases include 10/100 GBE in-rack connectivity for servers and SDS environments, high performance computing clusters, and converged lan / san environments.';
-            break;
-        case 'powerswitch S 42 48 FB':
-        case 'powerswitch S4248 FB':
-        case 'powerswitch S 4,248 FB':
-        case 'powerswitch S 42 48':
-        case 'powerswitch S 4248':
-        case 'powerswitch S 4,248':
-            speechOutput = 'The powerswitch S42 48 FB is a state of the art deep-buffer 10/100 GBE data center switching platform built for top-of-rack and data center edge. Target use cases include HPC clusters, big data clusters, video distribution networks, storage networks, or other business-sensitive deployments that require the highest bandwidth.';
-            break;
-        default:
-            speechOutput = `${speechOutput} from ${slotValues.product.synonym}`;
-    }
-
-    return responseBuilder
-      .speak(speechOutput)
-      .getResponse();
-  },
-};
-
-const PoweredgeSummaryHandler = {
-  canHandle(handlerInput) {
-    const request = handlerInput.requestEnvelope.request;
-    return request.type === 'LaunchRequest' 
-      || (request.type === 'IntentRequest'
-        && request.intent.name === 'PoweredgeSummaryIntent');
-  },
-  handle(handlerInput) {
-    const responseBuilder = handlerInput.responseBuilder;
-    const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
-    const slotValues = getSlotValues(filledSlots);
-    var speechOutput;
-    
-    switch(slotValues.model.synonym) {
-        case 'XR2':
-        case 'x. r. two':
-            speechOutput = 'The poweredge X R 2 is a compact 1U 2-socket server with up to 8 2.5 inch hot-swappable drives. Target use cases include virtualization and software defined storage including V san.';
-            break;
-        case 'T1 40':
-        case 't. one forty':
-        //case 't1 forty':
-            speechOutput = 'The poweredge T1 40 is an easy to use and safe entry-level single-socket tower server designed for general-purpose business applications and remote offices. Target use cases include mail and messaging, as well as point of sale operations.';
-            break;
-        case 'T3 40':
-        case 't. three forty':
-            speechOutput = 'The poweredge T3 40 is a reliable, easy to manage, and scalable single-socket tower server designed for general purpose business appliactions. Target use cases include collaboration, sharing, database, backup, and recovery.';
-            break;
-        case 'T4 40':
-        case 't. four forty':
-            speechOutput = 'The poweredge T4 40 is a powerful yet quiet workhorse build for office workloads. Target use cases include mail, collaboration, and virtualization, as well as mid-size business analytics and intelligence.';
-            break;
-        case 'T6 40':
-        case 't. six forty':
-            speechOutput = 'The poweredge T6 40 is a versatile and scalable powerhouse server with massive internal storage capacity in either rack or tower form. Target use cases include desktop and server virtualization, ERP, and consolidation, as well as databases, business intelligence, and analytics';
-            break;
-        case 'R2 40':
-            speechOutput = 'The poweredge R2 40 is a single-socket entry-level rack server designed for businesses looking for enterprise class features at an affordable price. Target use cases include web server hosting, mail, messaging, and collaboration.';
-            break;
-        case 'R3 40':
-            speechOutput = 'The poweredge R3 40 is a single-socket rack server designed for productivity and data intensive applications for remote or branch offices. Target use cases include collaboration, mail, messaging, and backup and recovery.';
-            break;
-        case 'R4 40':
-            speechOutput = 'The poweredge R4 40 is a single-socket rack server optimized for dense scale-out computing and storage. Target use cases include high performance computing, virtualization, web-tech deployments, and applications.';    
-            break;
-        case 'R5 40':
-            speechOutput = 'The poweredge R5 40 is a versatile 2U server providing balanced compute and storage to adapt to a variety of applications. Target use cases include softwarae defined storage, messaging, and video streaming.';
-            break;
-        case 'R6 40':
-            speechOutput = 'The poweredge R6 40 is an ideal combination for dense scale out data center computing and storage in a 1U platform. Target use cases include HPC, virtualization, and software defined storage.';
-            break;
-        case 'R7 40':
-            speechOutput = 'The poweredge R7 40 is a workhorse server providing storage, I/O, and application accelaration balance with configuration flexibility. Target use cases include VDI, AI, machine learning, and private cloud utilities.';
-            break;
-        case 'R7 40 XD':
-            speechOutput = 'The poweredge R7 40 XD is an ideal server for applications requiring best-in-class storage performance, high scalability, and density. Target use cases include software defined storage, big data, unstructured data, and analytics.';
-            break;
-        case 'R7 40 XD2':
-        case 'R7 40 xd2':
-            speechOutput = 'The poweredge R7 40 XD 2 is a high performance enterprise content server. Target use cases include media streaming, exchange / sharepoint, software-defined-storage, and Hadoop';
-            break;
-        case 'R8 40':
-            speechOutput = 'The poweredge R8 40 is a high-performance 2U server built for demanding applications. Target use cases include data intensive applications and data analytics.';
-            break;
-        case 'R9 40':
-            speechOutput = 'The poweredge R9 40 is a 3U server designed to handle extremely demanding, mission-critical workloads and large databases. Target use cases include in-memory databases, analytics, and dense virtualization, including data-redundant hypervisors and fault-resistent memory.';
-            break;
-        case 'R9 40 xa':
-        case 'R9 40 XA':
-            speechOutput = 'The poweredge R9 40 X A is an extremely powerful 4U server designed to run complex workloads using highly scalable memory. Target use cases include compute-intensive applications, machine learning, artificial intelligence, and GPU database acceleration.';
-            break;
-        case 'R 6,415':
-            speechOutput = 'The poweredge R64 15 is a dense, highly configurable single socket server that offers superior TCO for scale-out software defined storage for the edge and for dense virtualization evironments. Target use cases include distributed core and edge computing, scale out SDS, and dense virtualization.';
-            break;
-        case 'R 7,415':
-            speechOutput = 'The poweredge R74 15 is a highly scalable single socket 2U server delivering outstanding TCO for scale-up and scale-out SDS supporting high performance edge computing. Target use cases include distributed core and edge computing, low latency high capacity SDS, virtualization, and BI analysis.';
-            break;
-        case 'R 7,425':
-            speechOutput = 'The poweredge R74 25 is a highly scalable 2U two socket server that delivers outstanding TCO and allows users to easily add extreme memory and stroage capacity for low latency, data intensive workloads. Target use cases include HPC and CFD, VDI cloud client computing, database analytics, and scale-up SDS environments.';
-            break;
-        case 'MX 7,000':
-            speechOutput = 'The poweredge MX 7,000 chassis hosts disaggregated blocks of server and storage nodes to create consumable resources on-demand. Target use cases include extreme density solutions and hyper converged infrastructure.';
-            break;
-        case 'MX 740 C':
-        case 'MX7 40 C':
-            speechOutput = 'The poweredge MX 7 40 C is a high performance compute node built for the MX 7,000 chassis. The MX 7 40 C acts as the foundation for software defined storage and networking, hyperconverged infrastructure, and dense virtualization.';
-            break;
-        case 'MX 840 C':
-        case 'MX8 40 C':
-            speechOutput = 'The poweredge MX 8 40 C is a powerful scale-up compute node for exceptionally demanding use cases built for the MX 7,000 chassis. Target use cases include database-driven mission critical applications, big data analytics, and high performance workloads.';
-            break;
-        case 'MX 5,016 S':
-            speechOutput = 'The poweredge MX 50 16 S is a dense, highly flexbible scale-out storage node built for the MX 7,000 chassis. Target use cases include software defined storage, SQL and ERP databases, and flexible virtualization.';
-            break;
-        case 'C 4,140':
-            speechOutput = 'The poweredge C 41 40 is a 1U accelerator-optimized, high density server supporting up to 4 GPUs with superior thermal efficiency. Target use cases include machine learning, technical computing, and low latency, high performance applications.';
-            break;
-        case 'C 6,420':
-            speechOutput = 'The poweredge C 64 20 is a 2U rack server that maximimizes density, scalability, and energy efficiency for high-performance hyperscale workloads. Target use cases include HPC, HCI, SAAS, and financial modeling.';
-            break;
-        case 'FX2':
-            speechOutput = 'The poweredge FX2 is a hybrid computing platform with the density and efficiency of a blade server with the simplicity and cost of a rack server. The FX2 allows users to host flexible blocks of server and storage resources while providing outstanding efficiencies through shared power, cooling, networking, I/O, and management within the chassis itself.';
-            break;
-        
-        default:
-            speechOutput = `I'm sorry I didn't catch that. Please make sure the ${slotValues.model.synonym} is a valid poweredge product`;
-    }
-
     return responseBuilder
       .speak(speechOutput)
       .getResponse();
@@ -340,42 +216,31 @@ const StartedInProgressHelpMeIntentHandler = {
     canHandle(handlerInput) {
     return handlerInput.requestEnvelope.request.type === "IntentRequest"
       && handlerInput.requestEnvelope.request.intent.name === "HelpMeIntent"
+      //Both of these are tests
+      && !handlerInput.requestEnvelope.request.intent.slots.product_type.value
+      && !handlerInput.requestEnvelope.request.intent.slots.specific_product.value
+      
       && handlerInput.requestEnvelope.request.dialogState !== 'COMPLETED';
   },
   handle(handlerInput) {
     return handlerInput.responseBuilder
+        //The speak and addElicitSlotDirective are tests
+      .speak('Ok, do you need help with a data storage, converged infrastructure, server, or data protection product?')
       .addDelegateDirective()
-      .getResponse();
-  }
-}
-
-const ListGivenHelpMeIntentHandler = {
-  canHandle(handlerInput) {
-    return handlerInput.requestEnvelope.request.type === "IntentRequest"
-      && handlerInput.requestEnvelope.request.intent.name === "HelpMeIntent"
-      && handlerInput.requestEnvelope.request.intent.slots.list_or_product.value 
-      && handlerInput.requestEnvelope.request.intent.slots.list_or_product.value === 'list'
-      && !handlerInput.requestEnvelope.request.intent.slots.product_type.value
-      && !handlerInput.requestEnvelope.request.intent.slots.specific_product.value //this is new
-  },
-  handle(handlerInput) {
-    return handlerInput.responseBuilder
-      .speak('Would you like a list of server, data strorage, converged infrastructure, or data protection products?')
-      .reprompt('Would you like a list of server, data strorage, converged infrastructure, or data protection products?')
       .addElicitSlotDirective('product_type')
       .getResponse();
   }
 }
-
+    
 //Test
 const ListGivenWithProductHelpMeIntentHandler = {
   canHandle(handlerInput) {
     return handlerInput.requestEnvelope.request.type === "IntentRequest"
       && handlerInput.requestEnvelope.request.intent.name === "HelpMeIntent"
-      && handlerInput.requestEnvelope.request.intent.slots.list_or_product.value 
-      && handlerInput.requestEnvelope.request.intent.slots.list_or_product.value === 'list'
+      //&& handlerInput.requestEnvelope.request.intent.slots.list_or_product.value 
+      //&& handlerInput.requestEnvelope.request.intent.slots.list_or_product.value === 'list'
       && handlerInput.requestEnvelope.request.intent.slots.product_type.value
-      && !handlerInput.requestEnvelope.request.intent.slots.specific_product.value
+      && !handlerInput.requestEnvelope.request.intent.slots.specific_product.value;
 
   },
   handle(handlerInput) {
@@ -394,8 +259,8 @@ const ListGivenWithProductHelpMeIntentHandler = {
             .getResponse();
     } else if (product === 'data protection') {
         return handlerInput.responseBuilder
-            .speak('List of security, ask for specific product')
-            .reprompt('List of security, ask for specific product')
+            .speak('The products in the data protection line include the power protect, power path, recoverpoint, data domain, and I D P A. Can I help you with a specific product?')
+            //.reprompt('List of security, ask for specific product')
             .addElicitSlotDirective('specific_product')
             .getResponse();
     } else if (product === 'converged infrastructure') {
@@ -405,32 +270,14 @@ const ListGivenWithProductHelpMeIntentHandler = {
             //.addElicitSlotDirective('specific_product')
             .getResponse();
     }
-  }
+  }   
 }
 
-const ProductGivenHelpMeIntentHandler = {
-  canHandle(handlerInput) {
-    return handlerInput.requestEnvelope.request.type === "IntentRequest"
-      && handlerInput.requestEnvelope.request.intent.name === "HelpMeIntent"
-      && handlerInput.requestEnvelope.request.intent.slots.list_or_product.value 
-      && (handlerInput.requestEnvelope.request.intent.slots.list_or_product.value === 'product'  || handlerInput.requestEnvelope.request.intent.slots.list_or_product.value === 'with a' || handlerInput.requestEnvelope.request.intent.slots.list_or_product.value === 'tell me about')
-      && !handlerInput.requestEnvelope.request.intent.slots.specific_product.value
-  },
-  handle(handlerInput) {
-    return handlerInput.responseBuilder
-      .speak('Which product can I help you with?')
-      .reprompt('Which product can I help you with?')
-      .addElicitSlotDirective('specific_product')
-      .getResponse();
-  }
-}
-
-//Test 10/25
 const SpecificProductGivenHelpMeIntentHandler = {
   canHandle(handlerInput) {
     return handlerInput.requestEnvelope.request.type === "IntentRequest"
       && handlerInput.requestEnvelope.request.intent.name === "HelpMeIntent"
-      && handlerInput.requestEnvelope.request.intent.slots.list_or_product.value 
+      //&& handlerInput.requestEnvelope.request.intent.slots.list_or_product.value 
       //&& handlerInput.requestEnvelope.request.intent.slots.product_type.value
       && handlerInput.requestEnvelope.request.intent.slots.specific_product.value
       && !handlerInput.requestEnvelope.request.intent.slots.specific_model.value
@@ -439,73 +286,110 @@ const SpecificProductGivenHelpMeIntentHandler = {
   handle(handlerInput) {
     //const product_class = handlerInput.requestEnvelope.request.intent.slots.product_type.value;
     const product = handlerInput.requestEnvelope.request.intent.slots.specific_product.value;
-    if (product === 'poweredge') {
+    var speechOutput;
+    var hasSpecificModel = true;
+    
+    //Multiple-model products -- more than one slot for specific_model
+    switch(product) {
+        case 'unity':
+            speechOutput = 'Ok, the unity is available in the following models: 300, 3 50F, 400, 4 50F, 500, 5 50F, 600, and 6 50F. Which model would you like to know about?';
+            break;
+        case 'isilon':
+        case 'isalon':
+        case 'i. salon':
+        case 'iceland':
+            speechOutput = 'Ok, the isilon is available in the following models: F800, F810, H500, H400, H5600, H600, A200, and A2000. Which model would you like to know about?';
+            break;
+        case 'PowerMax':
+            speechOutput = 'Ok, the powermax is available in the following models: The 2000 and the 8000. Which model would you like to know about?';
+            break;
+        case 'unity XT':
+            speechOutput = 'Ok, the unity XT is available in the following models: 3 80, 3 80F, 4 80, 4 80F, 6 80, 6 80F, 8 80, and 8 80F. Which model would you like to know about?';
+            break;
+        case 'SC series':
+            speechOutput = 'Ok, the S C series is available in the following models: 50 20, 50 20F, 70 20, 70 20F, V 3000, and 9000. Which model would you like to know about?';
+            break;
+        case 'V max':
+        case 'vmax':
+        case 'v. max':
+            speechOutput = 'Ok, the V max is available in the following models: 2 50F, 9 50F, 100K, 200K, and 400K. Which model would you like to know about?';
+            break;
+        case 'connectrix':
+            speechOutput = 'Ok, the Connectrix is available in the following models: B series switch, B series director, MDS series switch, and MDS series director. Which model would you like to know about?';
+            break;
+        case 'power protect':
+            speechOutput = 'Ok, the power protect is available in the following models: DD 33 hundred, DD 69 hundred, DD 94 hundred, DD 99 hundred, and X 400. Which model would you like to know about?';
+            break;
+        case 'data domain':
+            speechOutput = 'Ok, the data domain is available in the following models: DD 63 hundred, DD 68 hundred, DD 93 hundred, and DD 98 hundred. Which model would you like to know about?';
+            break;
+        case 'IDPA':
+            speechOutput = 'Ok, the I D P A, or Integrated Data Protection Appliance, is available in the following models: DP 44 hundred, DP 58 hundred, DP 83 hundred, and DP 88 hundred. Which model would you like to know about?';
+            break;
+            
+        //Single model products -- No slot for specific_model
+        case 'recover point':
+            hasSpecificModel = false;
+            speechOutput = 'Dell EMC RecoverPoint replication software provides the continuous data protection you need to recover any application, on any supported storage array, in any location, to any point in time. Recoverpoint helps you meet your recovery point objectives and recovery time objectives with instant access to data. Recoverpoint for virtual machines can also be used to enable quick recovery of VMware virtual machines to any point in time.';
+            break;
+        case 'power path':
+            hasSpecificModel = false;
+            speechOutput = 'Dell EMC Powerpath is a family of software products that ensures consistent application availability and performance across I/O paths on physical and virtual platforms. The powerpath software provides automated path management and tools that enable you to satisfy aggressive service-level agreements without investing in additional infrastructure. Dell EMC PowerPath VE is compatible with VMware vSphere and Microsoft Hyper-V-based virtual environments and can be used together with the PowerPath software to perform critical functions in both physical and virtual environments.';
+            break;
+        case 'extreme IO':
+            hasSpecificModel = false;
+            speechOutput = 'The extreme IO is an all-flash storage array built for modernizing block storage workloads and offers 4 to 20 times data reduction using inline deduplication, compression, XtremIO Virtual Copies, and thin provisioning. The extreme IO can scale up from a 5U one brick cluster up to a 20U four brick cluster.';
+            break;
+        case 'ECS':
+            hasSpecificModel = false;
+            speechOutput = 'The ECS is the leading object-storage platform from Dell EMC, and has been engineered to support both traditional and next-generation workloads. The ECS supports object, file, and HDFS protocols and offers configurations from 60 terabytes to 8.6 petabytes in a single rack.';
+            break;
+        case 'powervault':
+            hasSpecificModel = false;
+            speechOutput = 'The PowerVault ME4 Series is a next-generation entry-level block storage array purpose-built and optimized for price-sensitive SAN & DAS environments. The powervault is available in either 2U or 5U form factors and can house up to Up to 336 drives with 4PB raw capacity';
+            break;
+            
+        //Default case -- if user requests a product that's unavailable or mispronounces a product
+        default:
+            switch(Math.floor(Math.random() * 5)+1) {
+                case 1:
+                    speechOutput = 'Sorry, I didnt catch that';
+                    break;
+                case 2:
+                    speechOutput = 'Im sorry, could you repeat that?';
+                    break;
+                case 3:
+                    speechOutput = 'Hmm, I dont understand. Please try again.';
+                    break;
+                case 4:
+                    speechOutput = 'I didnt get all that. Try speaking clearly.';
+                    break;
+                case 5:
+                    speechOutput = 'Im not sure what youre saying. Please try again.';
+                    break;
+                }
+                break;
+    }
+            
+    if (hasSpecificModel === true) {
         return handlerInput.responseBuilder
-            .speak('The poweredge is Dells premier server line. Would you like a full list of poweredge models?')
-            .reprompt('The poweredge is Dells premier server line. Would you like a full list of poweredge models?')
+            .speak(speechOutput)
             .addElicitSlotDirective('specific_model')
             .getResponse();
-    } else if (product === 'unity') { //works
+    } else {
+        const product_class = handlerInput.requestEnvelope.request.intent.slots.product_type.value;
+        var values = [timestamp, product_class, product, null];
+        connection.query("INSERT INTO innodb.Lambda (TIMESTAMP,CATEGORY,PRODUCT,MODEL) VALUES(?)", [values], function(err, result, fields) {
+            // if any error while executing above query, throw error
+            if (err) throw err;
+            // if there is no error, you have the result
+            console.log(result);
+        });
+        connection.end();
         return handlerInput.responseBuilder
-            .speak('Ok, the unity is available in the following models: 300, 3 50F, 400, 4 50F, 500, 5 50F, 600, and 6 50F. Which model would you like to know about?')
-            //.reprompt('List of storage, ask for specific product')
-            .addElicitSlotDirective('specific_model')
-            .getResponse();
-    } else if (product === 'isilon' || product === 'isalon' || product === 'i. salon' || product === 'iceland') { //works
-        return handlerInput.responseBuilder
-            .speak('Ok, the isilon is available in the following models: F800, F810, H500, H400, H5600, H600, A200, and A2000. Which model would you like to know about?')
-            .reprompt('List of storage, ask for specific product')
-            .addElicitSlotDirective('specific_model')
-            .getResponse();
-    } else if (product === 'PowerMax') {
-        return handlerInput.responseBuilder
-            .speak('Ok, the powermax is available in the following models: The 2000 and the 8000. Which model would you like to know about?')
-            .reprompt('List of storage, ask for specific product')
-            .addElicitSlotDirective('specific_model')
-            .getResponse();
-    } else if (product === 'unity XT') { //works
-        return handlerInput.responseBuilder
-            .speak('Ok, the unity XT is available in the following models: 3 80, 3 80F, 4 80, 4 80F, 6 80, 6 80F, 8 80, and 8 80F. Which model would you like to know about?')
-            .reprompt('List of storage, ask for specific product')
-            .addElicitSlotDirective('specific_model')
-            .getResponse();
-    } else if (product === 'SC series') { //works
-        return handlerInput.responseBuilder
-            .speak('Ok, the S C series is available in the following models: 50 20, 50 20F, 70 20, 70 20F, V 3000, and 9000. Which model would you like to know about?')
-            .reprompt('List of storage, ask for specific product')
-            .addElicitSlotDirective('specific_model')
-            .getResponse();
-    } else if (product === 'V max' || product === 'vmax' || product === 'v. max') { //works
-        return handlerInput.responseBuilder
-            .speak('Ok, the V max is available in the following models: 2 50F, 9 50F, 100K, 200K, and 400K. Which model would you like to know about?')
-            .reprompt('List of storage, ask for specific product')
-            .addElicitSlotDirective('specific_model')
-            .getResponse();
-    } else if (product === 'ECS') {
-        return handlerInput.responseBuilder
-            .speak('The ECS is the leading object-storage platform from Dell EMC, and has been engineered to support both traditional and next-generation workloads. The ECS supports object, file, and HDFS protocols and offers configurations from 60 terabytes to 8.6 petabytes in a single rack.')
-            .getResponse();
-    } else if (product === 'power vault' || product === 'powervault') {
-        return handlerInput.responseBuilder
-            .speak('The PowerVault ME4 Series is a next-generation entry-level block storage array purpose-built and optimized for price-sensitive SAN & DAS environments. The powervault is available in either 2U or 5U form factors and can house up to Up to 336 drives with 4PB raw capacity')
-            .reprompt('powervault summary')
-            .getResponse();
-    } else if (product === 'connectrix') {
-        return handlerInput.responseBuilder
-            .speak('Ok, the Connectrix is available in the following models: B series switch, B series director, MDS series switch, and MDS series director. Which model would you like to know about?')
-            .reprompt('List of storage, ask for specific product')
-            .addElicitSlotDirective('specific_model')
-            .getResponse();
-    } else if (product === 'extreme IO') { //works
-        return handlerInput.responseBuilder
-            .speak('The extreme IO is an all-flash storage array built for modernizing block storage workloads and offers 4 to 20 times data reduction using inline deduplication, compression, XtremIO Virtual Copies, and thin provisioning. The extreme IO can scale up from a 5U one brick cluster up to a 20U four brick cluster.')
-            .getResponse();
-    } else if (product === 'test') {
-        return handlerInput.responseBuilder
-            .speak('testing')
+            .speak(speechOutput)
             .getResponse();
     }
-    
   }
 }
 
@@ -516,7 +400,7 @@ const CompletedHelpMeIntentHandler = {
         && handlerInput.requestEnvelope.request.dialogState === "COMPLETED";
     },
     handle(handlerInput) {
-        const l_or_p = handlerInput.requestEnvelope.request.intent.slots.list_or_product.value;
+        //const l_or_p = handlerInput.requestEnvelope.request.intent.slots.list_or_product.value;
         var product = handlerInput.requestEnvelope.request.intent.slots.specific_product.value; //new
         var model = handlerInput.requestEnvelope.request.intent.slots.specific_model.value;
         var speechOutput;
@@ -672,11 +556,91 @@ const CompletedHelpMeIntentHandler = {
                         break;
                 }
                 break;
+            case 'power protect':
+                switch (model) {
+                    case 'DD 3,300':
+                        speechOutput = 'The PowerProtect DD3300 is a 2U protection storage appliance that allows for cloud-enabled protection. The DD 33 hundred is an entry-level backup appliance designed for SMB IT environments and enterprise remote or branch offices with a starting capacity of 4 terabytes.';
+                        break;
+                    case 'DD 6,900':
+                        speechOutput = 'The PowerProtect DD 69 hundred is a 2U protection storage appliance built for consolidating backups, archiving, and disaster recovery. The DD 69 hundred has a throughput up to 33 terabytes an hour, with up to 18.7 petabytes of local logical capacity extendable to 56.1 petabytes with Cloud Tier.';
+                        break;
+                    case 'DD 9,400':
+                        speechOutput = 'The PowerProtect DD 94 hundred is a 2U protection storage appliance built for consolidating backups, archiving, and disaster recovery. The DD 94 hundred has a throughput up to 57 terabytes an hour, with up to 49.9 petabytes of local logical capacity extendable to 149.8 petabytes with Cloud Tier.';
+                        break;
+                    case 'DD 9,900':
+                        speechOutput = 'The PowerProtect DD 99 hundred is a 2U protection storage appliance built for consolidating backups, archiving, and disaster recovery. The DD 99 hundred has a throughput up to 94 terabytes an hour, with up to 81.3 petabytes of local logical capacity extendable to 211 petabytes with Cloud Tier.';
+                        break;
+                    case 'X 400':
+                        speechOutput = 'The PowerProtect X 400 is available in both all-flash and hybrid models. The all-flash model has a maximum throughput of 105 terabytes an hour with four cubes, or 27 terabytes an hour with a single cube. The hybrid model has a maximum throughput of 40 terabytes with four cubes, or 9.8 terabytes an hour with a single cube.';
+                        break;
+                }
+                break;
+            case 'data domain':
+                switch (model) {
+                    case 'DD 6,300':
+                        speechOutput = 'The Data Domain DD 63 hundred is a capable, cost-effective protection storage system built for backup, archive, and disaster recovery ideal for small to midrange data centers. The DD 63 hundred has a throughput of up to 24 terabytes per hour, with up to 8.9 petabytes of local logical capacity.';
+                        break;
+                    case 'DD 6,800':
+                        speechOutput = 'The Data Domain DD 68 hundred is a capable, cost-effective protection storage system built for backup, archive, and disaster recovery ideal for midrange enterprise workloads. The DD 68 hundred has a throughput of up to 32 terabytes per hour, with up to 14.4 petabytes of local logical capacity expandable to 43.2 petabytes with optional cloud tier software.';
+                        break;
+                    case 'DD 9,300':
+                        speechOutput = 'The Data Domain DD 93 hundred is a capable, cost-effective protection storage system built for backup, archive, and disaster recovery ideal for large enterprise workloads. The DD 93 hundred has a throughput of up to 41 terabytes per hour, with up to 36 petabytes of local logical capacity expandable to 108 petabytes with optional Cloud Tier Software.';
+                        break;
+                    case 'DD 9,800':
+                        speechOutput = 'The Data Domain DD 98 hundred is a capable, cost-effective protection storage system built for backup, archive, and disaster recovery ideal for the most demanding enterprise workloads. The DD 98 hundred has a throughput of up to 68 terabytes per hour, with up to 50 petabytes of local logical capacity expandable to 150 petabytes with optional Cloud Tier Software.';
+                        break;
+                }
+                break;
+            case 'IDPA':
+                switch (model) {
+                    case 'DP 4,400':
+                        speechOutput = 'The I D P A DP 44 hundred is a converged appliance that combines backup, replication, deduplication, analytics, and restore, as well as DR and long-term retention to the Cloud. The DP 44 hundred has a maximum throughput of 14.4 terabytes per hour and is ideal for small and mid-size organizations and remote or branch offices of larger enterprises.';
+                        break;
+                    case 'DP 5,800':
+                        speechOutput = 'The I D P A DP 58 hundred is a converged appliance that combines backup, replication, deduplication, analytics, and restore, as well as DR and long-term retention to the Cloud. The DP 58 hundred has a maximum throughput of 32 terabytes per hour and is ideal for mid-size enterprises looking to simplify and strengthen data protection';
+                        break;
+                    case 'DP 8,300':
+                        speechOutput = 'The I D P A DP 83 hundred is a converged appliance that combines backup, replication, deduplication, analytics, and restore, as well as DR and long-term retention to the Cloud. The DP 83 hundred has a maximum throughput of 41 terabytes per hour and is ideal for large enterprises.';
+                        break;
+                    case 'DP 8,800':
+                        speechOutput = 'The I D P A DP 88 hundred is a converged appliance that combines backup, replication, deduplication, analytics, and restore, as well as DR and long-term retention to the Cloud. The DP 88 hundred has a maximum throughput of 68 terabytes per hour and is ideal for large enterprises that require the highest service level agreements.';
+                        break;
+                }
+                break;
             default:
-                speechOutput = `It looks like you want ${product} ${model}`;
+                switch(Math.floor(Math.random() * 5)+1) {
+                    case 1:
+                        speechOutput = 'Sorry, I didnt catch that';
+                        break;
+                    case 2:
+                        speechOutput = 'Im sorry, could you repeat that?';
+                        break;
+                    case 3:
+                        speechOutput = 'Hmm, I dont understand. Please try again.';
+                        break;
+                    case 4:
+                        speechOutput = 'I didnt get all that. Try speaking clearly.';
+                        break;
+                    case 5:
+                        speechOutput = 'Im not sure what youre saying. Please try again.';
+                        break;
+                }
+                //speechOutput = `It looks like you want ${product} ${model}`;
                 break;
 
         }
+        const product_class = handlerInput.requestEnvelope.request.intent.slots.product_type.value;
+        var values = [timestamp, product_class, product, model];
+        connection.query("INSERT INTO innodb.Lambda (TIMESTAMP,CATEGORY,PRODUCT,MODEL) VALUES(?)", [values], function(err, result, fields) {
+            // if any error while executing above query, throw error
+            if (err) throw err;
+            // if there is no error, you have the result
+            console.log(result);
+        });
+        
+        connection.end();
+        
+        console.log("GOOD JOB - THIS.EVENT = " + JSON.stringify(this.event));
         //let speechText = `It looks like you want ${type} ${drink}`;
         return handlerInput.responseBuilder
         .speak(speechOutput)
@@ -793,30 +757,21 @@ function getSlotValues(filledSlots) {
   return slotValues;
 }
 
+
 // Exports handlers
 const skillBuilder = Alexa.SkillBuilders.custom();
 exports.handler = skillBuilder
   .addRequestHandlers(
+    FallbackHandler,
+    PlayStreamIntentHandler,
+    PlaybackStoppedIntentHandler,
+    CancelAndStopIntentHandler,
+    PlaybackStartedIntentHandler,
     LaunchRequestHandler,
     InProgressHandler,
     CompletedHandler,
-    //MaxCapacityHandler,
-    //CacheSizeHandler,
-    //CPUHandler,
-    SummaryHandler,
-    //ListProductsHandler,
-    //ConnectrixSummaryHandler,
-    //VMAXSummaryHandler,
-    //SCSeriesSummaryHandler,
-    //IsilonSummaryHandler,
-    //PowermaxSummaryHandler,
-    //UnitySummaryHandler,
-    //PoweredgeSummaryHandler,
-    //HelpMeHandler,
     StartedInProgressHelpMeIntentHandler,
-    ListGivenHelpMeIntentHandler,
     ListGivenWithProductHelpMeIntentHandler,
-    ProductGivenHelpMeIntentHandler,
     SpecificProductGivenHelpMeIntentHandler,
     CompletedHelpMeIntentHandler,
     CancelStopHandler,
